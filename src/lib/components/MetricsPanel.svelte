@@ -119,37 +119,5 @@
         <p class="text-sm font-semibold text-slate-700 tabular-nums">{sampleRate.toLocaleString()} Hz</p>
       </div>
     </div>
-
-    <!-- Why spline works best -->
-    <details class="mt-4">
-      <summary class="text-sm font-medium text-slate-600 cursor-pointer hover:text-slate-800">
-        Why Cubic Spline works best for audio ▸
-      </summary>
-      <div class="mt-2 text-xs text-slate-600 space-y-2 pl-3 border-l-2 border-blue-200">
-        <p>
-          <strong>Audio signals are smooth & continuous.</strong> Cubic splines fit piecewise 
-          cubic polynomials with C² continuity (continuous second derivative), matching the 
-          inherent smoothness of audio waveforms.
-        </p>
-        <p>
-          <strong>Linear interpolation creates corners</strong> at every join point, introducing 
-          high-frequency artifacts (clicks and harshness) that degrade perceived audio quality.
-        </p>
-        <p>
-          <strong>PCHIP (Piecewise Cubic Hermite)</strong> preserves the shape of data — it 
-          never overshoots between adjacent samples. Excellent when the signal shape must be 
-          strictly preserved, though it sacrifices C² smoothness.
-        </p>
-        <p>
-          <strong>Moving Average</strong> fills gaps linearly then smooths with a sliding window.
-          Useful as a baseline to show the benefit of higher-order methods, but blurs transients.
-        </p>
-        <p>
-          <strong>Cubic Spline</strong> avoids all these problems: smooth joins, local support (errors 
-          don't propagate globally), and O(n) computation. It's the same method used in professional 
-          DAWs and codec error concealment (e.g., Opus PLC).
-        </p>
-      </div>
-    </details>
   {/if}
 </div>

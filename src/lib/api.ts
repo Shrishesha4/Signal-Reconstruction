@@ -41,6 +41,22 @@ export interface ProcessingMetrics {
 	snr_db: number;
 }
 
+export interface DegradationParams {
+	dropoutPct: number;      // % of audio to drop (0-50)
+	dropoutLengthMs: number; // average dropout segment length in ms (10-500)
+	glitchPct: number;       // % of audio with glitches (0-20)
+	clipPct: number;         // % of audio with clipping (0-30)
+	noiseLevel: number;      // Gaussian noise amplitude (0-0.1)
+}
+
+export const DEFAULT_DEGRADATION: DegradationParams = {
+	dropoutPct: 10,
+	dropoutLengthMs: 100,
+	glitchPct: 5,
+	clipPct: 10,
+	noiseLevel: 0.02
+};
+
 export interface ProcessingResult {
 	sampleRate: number;
 	totalSamples: number;
@@ -122,14 +138,16 @@ export interface SciDataPreset {
  */
 export async function processAudio(
 	file: File,
-	dropoutPct: number,
-	noiseLevel: number,
+	degradation: DegradationParams,
 	method: string
 ): Promise<ProcessingResult> {
 	const form = new FormData();
 	form.append('file', file);
-	form.append('dropout_pct', dropoutPct.toString());
-	form.append('noise_level', noiseLevel.toString());
+	form.append('dropout_pct', degradation.dropoutPct.toString());
+	form.append('dropout_length_ms', degradation.dropoutLengthMs.toString());
+	form.append('glitch_pct', degradation.glitchPct.toString());
+	form.append('clip_pct', degradation.clipPct.toString());
+	form.append('noise_level', degradation.noiseLevel.toString());
 	form.append('method', method);
 
 	const res = await fetch(`${API_BASE}/api/process`, {
@@ -149,13 +167,15 @@ export async function processAudio(
  * Load the demo signal with given parameters.
  */
 export async function loadDemo(
-	dropoutPct: number,
-	noiseLevel: number,
+	degradation: DegradationParams,
 	method: string
 ): Promise<ProcessingResult> {
 	const params = new URLSearchParams({
-		dropout_pct: dropoutPct.toString(),
-		noise_level: noiseLevel.toString(),
+		dropout_pct: degradation.dropoutPct.toString(),
+		dropout_length_ms: degradation.dropoutLengthMs.toString(),
+		glitch_pct: degradation.glitchPct.toString(),
+		clip_pct: degradation.clipPct.toString(),
+		noise_level: degradation.noiseLevel.toString(),
 		method
 	});
 

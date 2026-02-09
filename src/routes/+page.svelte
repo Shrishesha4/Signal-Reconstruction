@@ -34,6 +34,8 @@
     type ProcessingResult,
     type RepairResult,
     type SciDataResult,
+    type DegradationParams,
+    DEFAULT_DEGRADATION,
   } from '$lib/api';
   import type { Tab } from '$lib/components/TabNavigation.svelte';
 
@@ -45,8 +47,7 @@
 
   // ── Audio Tab State ──────────────────────────────────────────────
   let audioMode = $state<'normal' | 'repair'>('normal');
-  let dropoutPct = $state(20);
-  let noiseLevel = $state(0.02);
+  let degradation = $state<DegradationParams>({ ...DEFAULT_DEGRADATION });
   let method = $state('pchip');
   let audioFile: File | null = $state(null);
   let audioResult = $state<ProcessingResult | null>(null);
@@ -187,9 +188,9 @@
     error = '';
     try {
       if (audioFile && audioMode === 'normal') {
-        audioResult = await processAudio(audioFile, dropoutPct, noiseLevel, method);
+        audioResult = await processAudio(audioFile, degradation, method);
       } else {
-        audioResult = await loadDemo(dropoutPct, noiseLevel, method);
+        audioResult = await loadDemo(degradation, method);
       }
       repairResult = null;
     } catch (e: any) {
@@ -413,8 +414,7 @@
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
       <AudioInput onfileselected={onAudioFileSelected} ondemo={onAudioDemoSelected} {processing} />
       <DegradationControls
-        bind:dropoutPct
-        bind:noiseLevel
+        bind:degradation
         bind:method
         {processing}
         onprocess={runAudioProcessing}

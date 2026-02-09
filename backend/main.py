@@ -41,6 +41,8 @@ from processing import (
     load_wav_bytes,
     degrade_signal,
     reconstruct_signal,
+    reconstruct_signal_advanced,
+    compare_reconstruction_methods,
     compute_metrics,
     generate_demo_signal,
     signal_to_wav_base64,
@@ -89,18 +91,54 @@ async def health():
 
 @app.get("/api/demo")
 async def demo_signal(
-    dropout_pct: float = 20.0,
+    dropout_pct: float = 10.0,
+    dropout_length_ms: float = 100.0,
+    glitch_pct: float = 5.0,
+    clip_pct: float = 10.0,
     noise_level: float = 0.02,
     method: str = "pchip",
+    seed: Optional[int] = None,
 ):
-    """Return a demo sine-composite signal, degraded and reconstructed."""
+    """
+    Return a demo sine-composite signal, degraded and reconstructed.
+    
+    Uses ADVANCED reconstruction pipeline with:
+    - Spectral subtraction for noise reduction
+    - Sinusoidal modeling for large gaps
+    - Tikhonov regularization for stability
+    
+    Degradation Parameters:
+        dropout_pct:       % of audio to drop as silence (0-50)
+        dropout_length_ms: average length of dropout segments in ms (10-500)
+        glitch_pct:        % of audio with glitch artifacts (0-20)
+        clip_pct:          % of audio with amplitude clipping (0-30)
+        noise_level:       Gaussian noise amplitude (0-0.1)
+        seed:              Random seed for reproducible degradation (optional)
+    """
     sample_rate, samples = generate_demo_signal(duration=1.0, sr=8000)
 
     time_axis = np.arange(len(samples)) / sample_rate
     original = samples.astype(np.float64)
 
-    spoiled, mask = degrade_signal(original, dropout_pct=dropout_pct, noise_level=noise_level)
-    reconstructed = reconstruct_signal(time_axis, spoiled, mask, method=method)
+    spoiled, mask = degrade_signal(
+        original,
+        sample_rate=sample_rate,
+        dropout_pct=dropout_pct,
+        dropout_length_ms=dropout_length_ms,
+        glitch_pct=glitch_pct,
+        clip_pct=clip_pct,
+        noise_level=noise_level,
+        seed=seed,
+    )
+    # Use advanced reconstruction for better quality
+    reconstructed = reconstruct_signal_advanced(
+        time_axis, spoiled, mask,
+        sample_rate=sample_rate,
+        method=method,
+        use_sinusoidal_model=True,
+        use_spectral_subtraction=True,
+        use_tikhonov=True,
+    )
     metrics = compute_metrics(original, reconstructed)
 
     return _build_response(time_axis, original, spoiled, reconstructed, mask, metrics, sample_rate)
@@ -109,11 +147,23 @@ async def demo_signal(
 @app.post("/api/process")
 async def process_audio(
     file: UploadFile = File(...),
-    dropout_pct: float = Form(20.0),
+    dropout_pct: float = Form(10.0),
+    dropout_length_ms: float = Form(100.0),
+    glitch_pct: float = Form(5.0),
+    clip_pct: float = Form(10.0),
     noise_level: float = Form(0.02),
     method: str = Form("pchip"),
 ):
-    """Full pipeline: load WAV → degrade → reconstruct → return."""
+    """
+    Full pipeline: load WAV → degrade → reconstruct → return.
+    
+    Degradation Parameters:
+        dropout_pct:       % of audio to drop as silence (0-50)
+        dropout_length_ms: average length of dropout segments in ms (10-500)
+        glitch_pct:        % of audio with glitch artifacts (0-20)
+        clip_pct:          % of audio with amplitude clipping (0-30)
+        noise_level:       Gaussian noise amplitude (0-0.1)
+    """
     if not file.filename or not file.filename.lower().endswith(".wav"):
         raise HTTPException(status_code=400, detail="Only .wav files are supported.")
 
@@ -134,8 +184,24 @@ async def process_audio(
     if peak > 0:
         original = original / peak
 
-    spoiled, mask = degrade_signal(original, dropout_pct=dropout_pct, noise_level=noise_level)
-    reconstructed = reconstruct_signal(time_axis, spoiled, mask, method=method)
+    spoiled, mask = degrade_signal(
+        original,
+        sample_rate=sample_rate,
+        dropout_pct=dropout_pct,
+        dropout_length_ms=dropout_length_ms,
+        glitch_pct=glitch_pct,
+        clip_pct=clip_pct,
+        noise_level=noise_level,
+    )
+    # Use advanced reconstruction for better quality
+    reconstructed = reconstruct_signal_advanced(
+        time_axis, spoiled, mask,
+        sample_rate=sample_rate,
+        method=method,
+        use_sinusoidal_model=True,
+        use_spectral_subtraction=True,
+        use_tikhonov=True,
+    )
     metrics = compute_metrics(original, reconstructed)
 
     return _build_response(time_axis, original, spoiled, reconstructed, mask, metrics, sample_rate)
@@ -154,10 +220,215 @@ async def reconstruct_only(body: dict):
     except (KeyError, ValueError) as e:
         raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
 
-    reconstructed = reconstruct_signal(time_axis, spoiled, mask, method=method)
+    # Use advanced reconstruction for better quality
+    reconstructed = reconstruct_signal_advanced(
+        time_axis, spoiled, mask,
+        sample_rate=sample_rate,
+        method=method,
+        use_sinusoidal_model=True,
+        use_spectral_subtraction=True,
+        use_tikhonov=True,
+    )
     metrics = compute_metrics(original, reconstructed)
 
     return _build_response(time_axis, original, spoiled, reconstructed, mask, metrics, sample_rate)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Advanced Reconstruction Endpoints
+# ═══════════════════════════════════════════════════════════════════
+
+@app.get("/api/demo/advanced")
+async def demo_signal_advanced(
+    dropout_pct: float = 10.0,
+    dropout_length_ms: float = 100.0,
+    glitch_pct: float = 5.0,
+    clip_pct: float = 10.0,
+    noise_level: float = 0.02,
+    method: str = "pchip",
+    use_sinusoidal_model: bool = True,
+    use_spectral_subtraction: bool = True,
+    use_tikhonov: bool = True,
+):
+    """
+    Demo with ADVANCED reconstruction using classical DSP techniques.
+    
+    This endpoint uses the enhanced 5-stage pipeline:
+    1. Noise reduction (spectral subtraction, Wiener filtering)
+    2. Damage analysis & segmentation
+    3. Model-based reconstruction (sinusoidal modeling for large gaps)
+    4. Adaptive interpolation with Tikhonov regularization
+    5. Perceptual post-processing (compression, soft clipping)
+    
+    Compare with /api/demo for baseline reconstruction quality.
+    """
+    sample_rate, samples = generate_demo_signal(duration=1.0, sr=8000)
+
+    time_axis = np.arange(len(samples)) / sample_rate
+    original = samples.astype(np.float64)
+
+    spoiled, mask = degrade_signal(
+        original,
+        sample_rate=sample_rate,
+        dropout_pct=dropout_pct,
+        dropout_length_ms=dropout_length_ms,
+        glitch_pct=glitch_pct,
+        clip_pct=clip_pct,
+        noise_level=noise_level,
+    )
+    
+    # Use advanced reconstruction
+    reconstructed = reconstruct_signal_advanced(
+        time_axis, spoiled, mask,
+        sample_rate=sample_rate,
+        method=method,
+        use_sinusoidal_model=use_sinusoidal_model,
+        use_spectral_subtraction=use_spectral_subtraction,
+        use_tikhonov=use_tikhonov,
+    )
+    metrics = compute_metrics(original, reconstructed)
+
+    return _build_response(time_axis, original, spoiled, reconstructed, mask, metrics, sample_rate)
+
+
+@app.post("/api/process/advanced")
+async def process_audio_advanced(
+    file: UploadFile = File(...),
+    dropout_pct: float = Form(10.0),
+    dropout_length_ms: float = Form(100.0),
+    glitch_pct: float = Form(5.0),
+    clip_pct: float = Form(10.0),
+    noise_level: float = Form(0.02),
+    method: str = Form("pchip"),
+    use_sinusoidal_model: bool = Form(True),
+    use_spectral_subtraction: bool = Form(True),
+    use_tikhonov: bool = Form(True),
+):
+    """
+    Process audio with ADVANCED reconstruction pipeline.
+    
+    Full pipeline: load WAV → degrade → advanced reconstruct → return.
+    """
+    if not file.filename or not file.filename.lower().endswith(".wav"):
+        raise HTTPException(status_code=400, detail="Only .wav files are supported.")
+
+    raw = await file.read()
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 10 MB).")
+
+    try:
+        sample_rate, samples = load_wav_bytes(raw)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read WAV: {e}")
+
+    time_axis = np.arange(len(samples)) / sample_rate
+    original = samples.astype(np.float64)
+
+    peak = np.max(np.abs(original))
+    if peak > 0:
+        original = original / peak
+
+    spoiled, mask = degrade_signal(
+        original,
+        sample_rate=sample_rate,
+        dropout_pct=dropout_pct,
+        dropout_length_ms=dropout_length_ms,
+        glitch_pct=glitch_pct,
+        clip_pct=clip_pct,
+        noise_level=noise_level,
+    )
+    
+    reconstructed = reconstruct_signal_advanced(
+        time_axis, spoiled, mask,
+        sample_rate=sample_rate,
+        method=method,
+        use_sinusoidal_model=use_sinusoidal_model,
+        use_spectral_subtraction=use_spectral_subtraction,
+        use_tikhonov=use_tikhonov,
+    )
+    metrics = compute_metrics(original, reconstructed)
+
+    return _build_response(time_axis, original, spoiled, reconstructed, mask, metrics, sample_rate)
+
+
+@app.get("/api/compare")
+async def compare_methods(
+    dropout_pct: float = 15.0,
+    dropout_length_ms: float = 100.0,
+    glitch_pct: float = 5.0,
+    clip_pct: float = 10.0,
+    noise_level: float = 0.02,
+    seed: Optional[int] = None,
+):
+    """
+    Compare baseline vs advanced reconstruction across all methods.
+    
+    Returns detailed metrics showing improvement for each method.
+    Useful for demonstrating the effectiveness of advanced DSP techniques.
+    """
+    sample_rate, samples = generate_demo_signal(duration=1.0, sr=8000)
+    
+    time_axis = np.arange(len(samples)) / sample_rate
+    original = samples.astype(np.float64)
+    
+    spoiled, mask = degrade_signal(
+        original,
+        sample_rate=sample_rate,
+        dropout_pct=dropout_pct,
+        dropout_length_ms=dropout_length_ms,
+        glitch_pct=glitch_pct,
+        clip_pct=clip_pct,
+        noise_level=noise_level,
+        seed=seed,
+    )
+    
+    # Compare all methods
+    comparison = compare_reconstruction_methods(
+        time_axis, original, spoiled, mask, sample_rate
+    )
+    
+    # Add summary statistics
+    summary = {
+        "damage_config": {
+            "dropout_pct": dropout_pct,
+            "dropout_length_ms": dropout_length_ms,
+            "glitch_pct": glitch_pct,
+            "clip_pct": clip_pct,
+            "noise_level": noise_level,
+        },
+        "best_baseline_method": None,
+        "best_baseline_snr": -float('inf'),
+        "best_advanced_method": None,
+        "best_advanced_snr": -float('inf'),
+        "average_snr_improvement": 0.0,
+        "average_mse_reduction_pct": 0.0,
+    }
+    
+    snr_improvements = []
+    mse_reductions = []
+    
+    for method, data in comparison.items():
+        baseline_snr = data['baseline']['snr_db']
+        advanced_snr = data['advanced']['snr_db']
+        
+        if baseline_snr > summary['best_baseline_snr']:
+            summary['best_baseline_snr'] = baseline_snr
+            summary['best_baseline_method'] = method
+        
+        if advanced_snr > summary['best_advanced_snr']:
+            summary['best_advanced_snr'] = advanced_snr
+            summary['best_advanced_method'] = method
+        
+        snr_improvements.append(data['improvement']['snr_db'])
+        mse_reductions.append(data['improvement']['mse_reduction'])
+    
+    summary['average_snr_improvement'] = round(sum(snr_improvements) / len(snr_improvements), 2)
+    summary['average_mse_reduction_pct'] = round(sum(mse_reductions) / len(mse_reductions), 2)
+    
+    return {
+        "methods": comparison,
+        "summary": summary,
+    }
 
 
 def _build_response(
