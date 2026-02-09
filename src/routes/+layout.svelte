@@ -23,7 +23,6 @@
         <p class="text-xs text-slate-500">Numerical Interpolation &middot; Audio Processing &middot; Analysis</p>
       </div>
     </div>
-    <span class="badge badge-blue">Final Year Project</span>
   </div>
 </header>
 
