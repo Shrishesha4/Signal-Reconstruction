@@ -21,11 +21,9 @@
   const methods = [
     { id: 'linear', label: 'Linear', desc: 'Piecewise linear — fast, may produce clicks' },
     { id: 'spline', label: 'Cubic Spline', desc: 'C² smooth piecewise cubics — best for audio' },
-    { id: 'lagrange', label: 'Lagrange', desc: 'Global polynomial — auto-disabled if unsafe' },
+    { id: 'pchip', label: 'PCHIP', desc: 'Shape-preserving Hermite — no overshoot' },
+    { id: 'moving_average', label: 'Moving Avg', desc: 'Smoothed linear fill — baseline comparison' },
   ];
-
-  // Lagrange is auto-disabled for audio (always too many points)
-  let lagrangeUnsafe = $derived(true); // always unsafe for real audio signals
 </script>
 
 <div class="card h-full">
@@ -75,19 +73,12 @@
       <span class="text-sm font-medium text-slate-700 mb-2 block">Interpolation Method</span>
       <div class="flex gap-2 flex-wrap">
         {#each methods as m}
-          {@const isUnsafe = m.id === 'lagrange' && lagrangeUnsafe}
           <button
-            class="method-pill {method === m.id ? 'method-pill-active' : 'method-pill-inactive'}
-                   {isUnsafe ? 'opacity-60 cursor-not-allowed' : ''}"
-            onclick={() => { if (!isUnsafe) method = m.id; }}
-            title={isUnsafe ? 'Disabled: audio signals have too many samples for Lagrange (Runge phenomenon)' : m.desc}
-            disabled={isUnsafe || processing}>
+            class="method-pill {method === m.id ? 'method-pill-active' : 'method-pill-inactive'}"
+            onclick={() => { method = m.id; }}
+            title={m.desc}
+            disabled={processing}>
             {m.label}
-            {#if isUnsafe}
-              <svg class="w-3.5 h-3.5 ml-1 inline text-amber-500" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
-              </svg>
-            {/if}
           </button>
         {/each}
       </div>
@@ -118,14 +109,14 @@
       {/if}
     </button>
 
-    {#if lagrangeUnsafe && method !== 'lagrange'}
-      <div class="px-3 py-2 rounded-lg bg-amber-50/70 border border-amber-200 text-amber-700 text-xs flex items-start gap-2">
+    {#if method !== 'spline'}
+      <div class="px-3 py-2 rounded-lg bg-blue-50/70 border border-blue-200 text-blue-700 text-xs flex items-start gap-2">
         <svg class="w-4 h-4 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-          <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+          <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
         </svg>
         <span>
-          <strong>Lagrange disabled:</strong> Audio signals contain thousands of samples.
-          Polynomial degree would cause extreme Runge oscillation. Use Cubic Spline instead.
+          <strong>Tip:</strong> Cubic Spline is recommended for audio signals —
+          it provides C² smoothness and matches how professional DAWs reconstruct lost samples.
         </span>
       </div>
     {/if}

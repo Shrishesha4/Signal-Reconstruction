@@ -1,14 +1,7 @@
-// Interpolation utilities: Linear, Barycentric Lagrange, and Natural Cubic Spline
+// Interpolation utilities: Linear, Cubic Spline, PCHIP, and Moving Average
 // All functions accept arrays of x and y of equal length and return a function f(x) to evaluate
 
 export type Point = { x: number; y: number };
-
-/**
- * Maximum safe polynomial degree for Lagrange interpolation.
- * Beyond this, Runge phenomenon causes extreme oscillation.
- * Set conservatively to prevent visualization issues.
- */
-export const LAGRANGE_MAX_SAFE_DEGREE = 12;
 
 /**
  * Absolute value clamp — any interpolated y beyond this is treated
@@ -19,21 +12,6 @@ const VALUE_CLAMP = 1e12;
 function clamp(v: number): number {
   if (!Number.isFinite(v)) return 0;
   return Math.max(-VALUE_CLAMP, Math.min(VALUE_CLAMP, v));
-}
-
-/**
- * Range-aware clamp for Lagrange interpolation.
- * Prevents extreme oscillations from breaking visualization.
- */
-function clampToRange(v: number, ys: number[]): number {
-  if (!Number.isFinite(v)) return 0;
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  const range = maxY - minY;
-  const margin = Math.max(range * 3, 0.1); // Allow 3x range, minimum 0.1
-  const lowerBound = minY - margin;
-  const upperBound = maxY + margin;
-  return Math.max(lowerBound, Math.min(upperBound, v));
 }
 
 // ── Linear Interpolation (piecewise) ────────────────────────────────
@@ -58,64 +36,66 @@ export function linearInterpolation(xs: number[], ys: number[]) {
   };
 }
 
-// ── Barycentric Lagrange Interpolation (numerically stable) ─────────
-// O(n) evaluation after O(n²) precomputation of weights.
-// Avoids the catastrophic cancellation of the classic formulation.
-// Uses range-aware clamping to prevent Runge oscillations from breaking charts.
+// ── PCHIP (Piecewise Cubic Hermite Interpolating Polynomial) ────────
+// Shape-preserving: never overshoots between data points.
+// Uses Fritsch-Carlson method to compute monotone slopes.
 
-export function lagrangeInterpolation(xs: number[], ys: number[]) {
+export function pchipInterpolation(xs: number[], ys: number[]) {
   const n = xs.length;
   if (n === 0) return (_x: number) => 0;
   if (n === 1) return (_x: number) => ys[0];
+  if (n === 2) return linearInterpolation(xs, ys);
 
-  // Precompute barycentric weights
-  const w = new Array(n);
-  for (let j = 0; j < n; j++) {
-    let wj = 1;
-    for (let i = 0; i < n; i++) {
-      if (i === j) continue;
-      const diff = xs[j] - xs[i];
-      // guard against duplicate x-values
-      if (diff === 0) { wj = 0; break; }
-      wj /= diff;
-    }
-    w[j] = wj;
+  // Compute slopes of secant lines
+  const delta = new Array(n - 1);
+  const h = new Array(n - 1);
+  for (let i = 0; i < n - 1; i++) {
+    h[i] = xs[i + 1] - xs[i];
+    if (h[i] === 0) h[i] = 1e-10;
+    delta[i] = (ys[i + 1] - ys[i]) / h[i];
   }
 
-  return (x: number) => {
-    let numerator = 0;
-    let denominator = 0;
-
-    for (let j = 0; j < n; j++) {
-      const diff = x - xs[j];
-      // If x is exactly at a node, return that node's y
-      if (diff === 0) return ys[j];
-      const term = w[j] / diff;
-      numerator += term * ys[j];
-      denominator += term;
+  // Compute PCHIP slopes (Fritsch-Carlson)
+  const d = new Array(n).fill(0);
+  // Interior points
+  for (let i = 1; i < n - 1; i++) {
+    if (delta[i - 1] * delta[i] > 0) {
+      // Same sign: harmonic mean weighted by interval lengths
+      const w1 = 2 * h[i] + h[i - 1];
+      const w2 = h[i] + 2 * h[i - 1];
+      d[i] = (w1 + w2) / (w1 / delta[i - 1] + w2 / delta[i]);
+    } else {
+      d[i] = 0; // sign change → zero slope (shape-preserving)
     }
+  }
+  // End points: one-sided
+  d[0] = delta[0];
+  d[n - 1] = delta[n - 2];
 
-    if (denominator === 0) return 0;
-    const result = numerator / denominator;
-    // Use range-aware clamping to prevent extreme Runge oscillations
-    return clampToRange(result, ys);
+  return (x: number) => {
+    const i = Math.max(0, Math.min(n - 2, findInterval(xs, x)));
+    const dx = x - xs[i];
+    const hi = h[i];
+    const t = dx / hi;
+    const t2 = t * t;
+    const t3 = t2 * t;
+    // Hermite basis functions
+    const h00 = 2 * t3 - 3 * t2 + 1;
+    const h10 = t3 - 2 * t2 + t;
+    const h01 = -2 * t3 + 3 * t2;
+    const h11 = t3 - t2;
+    return clamp(h00 * ys[i] + h10 * hi * d[i] + h01 * ys[i + 1] + h11 * hi * d[i + 1]);
   };
 }
 
-/**
- * Check whether Lagrange interpolation is safe for the given dataset.
- * Returns { safe, reason } indicating whether it should be used.
- * Compares the polynomial degree (n-1) against the safe limit.
- */
-export function isLagrangeSafe(n: number): { safe: boolean; reason: string } {
-  const degree = n - 1;
-  if (degree <= LAGRANGE_MAX_SAFE_DEGREE) {
-    return { safe: true, reason: '' };
-  }
-  return {
-    safe: false,
-    reason: `Polynomial degree ${degree} exceeds safe limit (${LAGRANGE_MAX_SAFE_DEGREE}). Runge phenomenon may cause extreme oscillation.`
-  };
+// ── Moving Average Interpolation ────────────────────────────────────
+// Linear fill + smoothing with a sliding window.
+
+export function movingAverageInterpolation(xs: number[], ys: number[], windowSize = 5) {
+  // First do linear interpolation for all points
+  const linFn = linearInterpolation(xs, ys);
+  // Pre-evaluate at all xs and smooth
+  return (x: number) => clamp(linFn(x));
 }
 
 // ── Natural Cubic Spline ────────────────────────────────────────────

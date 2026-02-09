@@ -31,7 +31,11 @@
   }
 
   let methodLabel = $derived(
-    method === 'spline' ? 'Cubic Spline' : method === 'linear' ? 'Linear' : 'Lagrange'
+    method === 'spline' ? 'Cubic Spline'
+      : method === 'linear' ? 'Linear'
+      : method === 'pchip' ? 'PCHIP'
+      : method === 'moving_average' ? 'Moving Avg'
+      : method
   );
 
   let qualityColor = $derived(() => {
@@ -63,7 +67,7 @@
   {#if !metrics}
     <div class="px-4 py-8 text-center rounded-lg bg-slate-50 border border-slate-200">
       <svg class="w-10 h-10 mx-auto text-slate-300 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-        <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M9 19v-6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2zm0 0V9a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v10m-6 0a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2m0 0V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2z" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       <p class="text-sm text-slate-500">Process audio to see error metrics.</p>
     </div>
@@ -132,12 +136,16 @@
           high-frequency artifacts (clicks and harshness) that degrade perceived audio quality.
         </p>
         <p>
-          <strong>Lagrange (global polynomial)</strong> is degree N-1 for N points. With thousands 
-          of audio samples, Runge's phenomenon causes extreme oscillation at signal boundaries — 
-          completely destroying the reconstruction.
+          <strong>PCHIP (Piecewise Cubic Hermite)</strong> preserves the shape of data — it 
+          never overshoots between adjacent samples. Excellent when the signal shape must be 
+          strictly preserved, though it sacrifices C² smoothness.
         </p>
         <p>
-          <strong>Cubic Spline</strong> avoids both problems: smooth joins, local support (errors 
+          <strong>Moving Average</strong> fills gaps linearly then smooths with a sliding window.
+          Useful as a baseline to show the benefit of higher-order methods, but blurs transients.
+        </p>
+        <p>
+          <strong>Cubic Spline</strong> avoids all these problems: smooth joins, local support (errors 
           don't propagate globally), and O(n) computation. It's the same method used in professional 
           DAWs and codec error concealment (e.g., Opus PLC).
         </p>

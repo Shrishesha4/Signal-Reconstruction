@@ -12,19 +12,24 @@ while preserving the signal's smooth character.
 - **Linear interpolation** connects gaps with straight lines, introducing
   artificial high-frequency content (sharp corners) → audible clicks/harshness.
 
-- **Lagrange polynomial** fits a single global polynomial through all points.
-  For N points, this is degree N-1. Beyond ~12 points, Runge's phenomenon
-  causes wild oscillation at the edges → catastrophic for audio.
+- **PCHIP (Piecewise Cubic Hermite Interpolating Polynomial)** preserves
+  the shape of the data — no overshoot between samples. Excellent for
+  audio where the signal should not exceed adjacent sample values.
 
 - **Cubic spline** fits piecewise cubic polynomials with C² continuity
   (continuous second derivative). This matches the smooth nature of audio
   waveforms, produces no oscillation artifacts, and scales to any number
   of points. It is the standard choice in professional audio interpolation
   (DAWs, sample rate converters, codec error concealment).
+
+- **Moving average** fills gaps via linear interpolation then smooths with
+  a sliding window.  Useful as a baseline comparison to show the benefit
+  of higher-order methods.
 """
 
 import numpy as np
 from scipy import interpolate
+from scipy.ndimage import uniform_filter1d
 import struct
 import wave
 import io
@@ -174,9 +179,6 @@ def degrade_signal(
 # Numerical Interpolation / Reconstruction
 # ═══════════════════════════════════════════════════════════════════
 
-LAGRANGE_MAX_SAFE = 12  # max points for Lagrange before Runge kicks in
-
-
 def reconstruct_signal(
     time_axis: np.ndarray,
     spoiled: np.ndarray,
@@ -190,10 +192,10 @@ def reconstruct_signal(
         time_axis: full time array
         spoiled:   degraded signal (dropped samples = 0)
         mask:      boolean mask; True = valid sample
-        method:    'linear', 'spline', or 'lagrange'
+        method:    'linear', 'spline', 'pchip', or 'moving_average'
 
     Returns:
-        Fully reconstructed signal array
+        Fully reconstructed signal array (clamped to [-1, 1])
     """
     valid_t = time_axis[mask]
     valid_y = spoiled[mask]
@@ -203,20 +205,33 @@ def reconstruct_signal(
 
     missing_t = time_axis[~mask]
 
+    # ── Moving average: linear fill then smooth ──────────────────────
+    if method == "moving_average":
+        # Step 1: linear interpolation to fill every gap
+        lin_fn = interpolate.interp1d(
+            valid_t, valid_y, kind="linear",
+            bounds_error=False, fill_value="extrapolate",
+        )
+        reconstructed = spoiled.copy()
+        if len(missing_t) > 0:
+            filled = lin_fn(missing_t)
+            filled = np.where(np.isfinite(filled), filled, 0.0)
+            reconstructed[~mask] = filled
+        # Step 2: sliding window smooth (≈0.5 % of signal, at least 3)
+        win = max(3, int(len(time_axis) * 0.005))
+        if win % 2 == 0:
+            win += 1
+        reconstructed = uniform_filter1d(reconstructed, size=win)
+        return np.clip(reconstructed, -1.0, 1.0)
+
+    # ── Pick interpolation function ──────────────────────────────────
     if method == "linear":
         interp_fn = interpolate.interp1d(
             valid_t, valid_y, kind="linear",
-            bounds_error=False, fill_value="extrapolate"
+            bounds_error=False, fill_value="extrapolate",
         )
-    elif method == "lagrange":
-        # Safety: only use Lagrange on small subsets
-        n_valid = len(valid_t)
-        if n_valid > LAGRANGE_MAX_SAFE:
-            # Fallback: use spline, but label it as lagrange-fallback
-            interp_fn = interpolate.CubicSpline(valid_t, valid_y, extrapolate=True)
-        else:
-            # Use barycentric Lagrange (numerically stable form)
-            interp_fn = interpolate.BarycentricInterpolator(valid_t, valid_y)
+    elif method == "pchip":
+        interp_fn = interpolate.PchipInterpolator(valid_t, valid_y, extrapolate=True)
     else:  # spline (default and recommended)
         interp_fn = interpolate.CubicSpline(valid_t, valid_y, extrapolate=True)
 
@@ -228,8 +243,8 @@ def reconstruct_signal(
         interpolated_values = np.where(
             np.isfinite(interpolated_values), interpolated_values, 0.0
         )
-        # Clamp to prevent extreme oscillations
-        interpolated_values = np.clip(interpolated_values, -1.5, 1.5)
+        # Clamp to [-1, 1] to prevent extreme oscillations
+        interpolated_values = np.clip(interpolated_values, -1.0, 1.0)
         reconstructed[~mask] = interpolated_values
 
     # Final clip

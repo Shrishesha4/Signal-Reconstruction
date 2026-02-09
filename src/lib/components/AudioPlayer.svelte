@@ -5,6 +5,7 @@
    */
   import { base64ToAudioUrl } from '$lib/api';
   import { onDestroy } from 'svelte';
+  import { untrack } from 'svelte';
 
   let {
     originalB64 = '',
@@ -30,18 +31,22 @@
   ]);
 
   // Audio elements and state
-  let audioElements: HTMLAudioElement[] = [];
+  let audioElements = $state<(HTMLAudioElement | undefined)[]>([]);
   let playingIndex = $state(-1);
   let progress = $state([0, 0, 0]);
   let durations = $state([0, 0, 0]);
   let audioUrls = $state<string[]>([]);
 
-  // Create/revoke object URLs
+  // Create/revoke object URLs when tracks change
   $effect(() => {
-    // Clean up old URLs
-    audioUrls.forEach((url) => { if (url) URL.revokeObjectURL(url); });
+    const newUrls = tracks.map((t) => (t.b64 ? base64ToAudioUrl(t.b64) : ''));
 
-    audioUrls = tracks.map((t) => (t.b64 ? base64ToAudioUrl(t.b64) : ''));
+    // Clean up old URLs without triggering reactivity
+    untrack(() => {
+      audioUrls.forEach((url) => { if (url) URL.revokeObjectURL(url); });
+    });
+
+    audioUrls = newUrls;
   });
 
   onDestroy(() => {

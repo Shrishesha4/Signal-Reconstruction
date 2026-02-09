@@ -2,15 +2,14 @@
   /**
    * InterpolationEngine.svelte – Section 3: Numerical Interpolation.
    *
-   * Three selectable methods with safety guards, debounced sliders,
-   * Lagrange instability warnings, and a computing spinner.
+   * Four selectable methods with safety guards, debounced sliders,
+   * and a computing spinner.
    */
   import {
     linearInterpolation,
-    lagrangeInterpolation,
     cubicSplineInterpolation,
-    isLagrangeSafe,
-    LAGRANGE_MAX_SAFE_DEGREE
+    pchipInterpolation,
+    movingAverageInterpolation,
   } from '$lib/interpolation';
 
   let {
@@ -21,7 +20,7 @@
     onreconstructed?: (pts: Array<{ x: number; y: number }>) => void;
   } = $props();
 
-  let method = $state<'linear' | 'polynomial' | 'spline'>('spline');
+  let method = $state<'linear' | 'spline' | 'pchip' | 'moving_average'>('spline');
   let samplesSlider = $state(300);  // raw slider value
   let samples = $state(300);        // debounced value used in computation
   let computing = $state(false);
@@ -35,16 +34,11 @@
   }
 
   const methods = [
-    { id: 'linear'     as const, label: 'Linear',       desc: 'Piecewise linear — fast, no oscillation' },
-    { id: 'polynomial' as const, label: 'Lagrange',     desc: 'Global polynomial — exact at nodes, may oscillate' },
-    { id: 'spline'     as const, label: 'Cubic Spline', desc: 'C² smooth piecewise cubics — best general choice' }
+    { id: 'linear'         as const, label: 'Linear',       desc: 'Piecewise linear — fast, no oscillation' },
+    { id: 'spline'         as const, label: 'Cubic Spline', desc: 'C² smooth piecewise cubics — best general choice' },
+    { id: 'pchip'          as const, label: 'PCHIP',        desc: 'Shape-preserving Hermite — no overshoot' },
+    { id: 'moving_average' as const, label: 'Moving Avg',   desc: 'Smoothed linear fill — baseline comparison' },
   ];
-
-  // ── safety checks ────────────────────────────────────────────────
-  let lagrangeCheck = $derived(isLagrangeSafe(points.length));
-  let isPolynomial = $derived((method as string) === 'polynomial');
-  let lagrangeDisabled = $derived(isPolynomial && !lagrangeCheck.safe);
-  let showLagrangeWarning = $derived(isPolynomial && points.length > 10);
 
   // ── derived computations ──────────────────────────────────────────
   let xs = $derived(points.map(p => p.x));
@@ -52,12 +46,9 @@
 
   let interpFn = $derived.by(() => {
     if (points.length < 2) return (_x: number) => 0;
-    if (method === 'linear')     return linearInterpolation(xs, ys);
-    if (method === 'polynomial') {
-      // Hard-prevent Lagrange above safe limit — fallback to spline silently
-      if (!lagrangeCheck.safe) return cubicSplineInterpolation(xs, ys);
-      return lagrangeInterpolation(xs, ys);
-    }
+    if (method === 'linear')         return linearInterpolation(xs, ys);
+    if (method === 'pchip')          return pchipInterpolation(xs, ys);
+    if (method === 'moving_average') return movingAverageInterpolation(xs, ys);
     return cubicSplineInterpolation(xs, ys);
   });
 
@@ -110,19 +101,12 @@
       <span class="text-sm font-medium text-slate-700 mb-2 block">Method</span>
       <div class="flex gap-2 flex-wrap">
         {#each methods as m}
-          {@const isUnsafe = m.id === 'polynomial' && !lagrangeCheck.safe}
           <button
-            class="method-pill {method === m.id ? 'method-pill-active' : 'method-pill-inactive'}
-                   {isUnsafe ? 'opacity-60 cursor-not-allowed' : ''}"
-            onclick={() => { if (!isUnsafe) method = m.id; }}
-            title={isUnsafe ? `Disabled: ${lagrangeCheck.reason}` : m.desc}
-            disabled={isUnsafe}>
+            class="method-pill {method === m.id ? 'method-pill-active' : 'method-pill-inactive'}"
+            onclick={() => { method = m.id; }}
+            title={m.desc}
+            disabled={false}>
             {m.label}
-            {#if isUnsafe}
-              <svg class="w-3.5 h-3.5 ml-1 inline text-amber-500" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
-              </svg>
-            {/if}
           </button>
         {/each}
       </div>
@@ -147,31 +131,6 @@
       </div>
     </div>
   </div>
-
-  <!-- Lagrange warnings -->
-  {#if showLagrangeWarning && lagrangeCheck.safe}
-    <div class="mt-3 px-4 py-2.5 rounded-lg bg-amber-50/70 border border-amber-200 text-amber-700 text-xs flex items-start gap-2">
-      <svg class="w-4 h-4 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
-      </svg>
-      <span>
-        <strong>Caution:</strong> Polynomial degree {points.length - 1} may show Runge oscillation at the edges.
-        Lagrange is auto-disabled above {LAGRANGE_MAX_SAFE_DEGREE} points. Consider Cubic Spline for smoother results.
-      </span>
-    </div>
-  {/if}
-
-  {#if lagrangeDisabled}
-    <div class="mt-3 px-4 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2">
-      <svg class="w-4 h-4 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
-      </svg>
-      <span>
-        <strong>Lagrange disabled:</strong> {lagrangeCheck.reason}
-        Falling back to Cubic Spline automatically.
-      </span>
-    </div>
-  {/if}
 
   <!-- Status bar -->
   {#if points.length < 2}

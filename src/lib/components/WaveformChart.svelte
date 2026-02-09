@@ -37,7 +37,8 @@
     import('chartjs-plugin-zoom').then(({ default: zoomPlugin }) => {
       ChartJS.register(zoomPlugin);
       pluginReady = true;
-      initChart();
+      // Don't call initChart here — the $effect below handles it
+      // once canvas is actually in the DOM.
     });
   });
 
@@ -185,16 +186,24 @@
     });
   }
 
-  // Update chart data reactively
+  // Unified effect: initializes chart when canvas + plugin are ready,
+  // and updates data on every prop change.
   $effect(() => {
-    // Touch reactive dependencies
+    // Subscribe to all reactive dependencies
     const _t = time;
     const _o = original;
     const _s = spoiled;
     const _r = reconstructed;
+    const _canvas = canvas;
+    const _ready = pluginReady;
+
+    if (!_ready || !_canvas) return;
+
     if (chartInstance) {
       chartInstance.data = buildData();
       chartInstance.update('none');
+    } else {
+      initChart();
     }
   });
 
