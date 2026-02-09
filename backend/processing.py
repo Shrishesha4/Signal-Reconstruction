@@ -14,7 +14,7 @@ import wave
 import io
 import base64
 
-from .interpolation import reconstruct as _interpolation_reconstruct
+from interpolation import reconstruct as _interpolation_reconstruct
 
 
 # ═══════════════════════════════════════════════════════════════════
