@@ -64,7 +64,7 @@ async def health():
 async def demo_signal(
     dropout_pct: float = 20.0,
     noise_level: float = 0.02,
-    method: str = "spline",
+    method: str = "pchip",
 ):
     """Return a demo sine-composite signal, degraded and reconstructed."""
     sample_rate, samples = generate_demo_signal(duration=1.0, sr=8000)
@@ -84,7 +84,7 @@ async def process_audio(
     file: UploadFile = File(...),
     dropout_pct: float = Form(20.0),
     noise_level: float = Form(0.02),
-    method: str = Form("spline"),
+    method: str = Form("pchip"),
 ):
     """Full pipeline: load WAV → degrade → reconstruct → return."""
     if not file.filename or not file.filename.lower().endswith(".wav"):
@@ -122,7 +122,7 @@ async def reconstruct_only(body: dict):
         spoiled = np.array(body["spoiled"], dtype=np.float64)
         mask = np.array(body["mask"], dtype=bool)
         original = np.array(body["original"], dtype=np.float64)
-        method = body.get("method", "spline")
+        method = body.get("method", "pchip")
         sample_rate = body.get("sampleRate", 8000)
     except (KeyError, ValueError) as e:
         raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")

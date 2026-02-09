@@ -1,39 +1,20 @@
 """
 processing.py – Core signal processing functions
 =================================================
-Audio loading, degradation, numerical interpolation, and metrics.
+Audio I/O, degradation, metrics, and plot helpers.
 
-Why Cubic Spline Works Best for Audio Reconstruction
------------------------------------------------------
-Audio signals are continuous, smooth waveforms sampled at regular intervals.
-When samples are lost (packet loss, corruption), we need to fill in the gaps
-while preserving the signal's smooth character.
-
-- **Linear interpolation** connects gaps with straight lines, introducing
-  artificial high-frequency content (sharp corners) → audible clicks/harshness.
-
-- **PCHIP (Piecewise Cubic Hermite Interpolating Polynomial)** preserves
-  the shape of the data — no overshoot between samples. Excellent for
-  audio where the signal should not exceed adjacent sample values.
-
-- **Cubic spline** fits piecewise cubic polynomials with C² continuity
-  (continuous second derivative). This matches the smooth nature of audio
-  waveforms, produces no oscillation artifacts, and scales to any number
-  of points. It is the standard choice in professional audio interpolation
-  (DAWs, sample rate converters, codec error concealment).
-
-- **Moving average** fills gaps via linear interpolation then smooths with
-  a sliding window.  Useful as a baseline comparison to show the benefit
-  of higher-order methods.
+All **numerical interpolation / reconstruction** logic lives in
+``backend.interpolation``  (scipy-backed, research-grade).
+This module delegates to it via ``reconstruct_signal()``.
 """
 
 import numpy as np
-from scipy import interpolate
-from scipy.ndimage import uniform_filter1d
 import struct
 import wave
 import io
 import base64
+
+from .interpolation import reconstruct as _interpolation_reconstruct
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -178,6 +159,13 @@ def degrade_signal(
 # ═══════════════════════════════════════════════════════════════════
 # Numerical Interpolation / Reconstruction
 # ═══════════════════════════════════════════════════════════════════
+# All interpolation logic is in backend/interpolation.py (SciPy-backed).
+# This thin wrapper keeps the public interface unchanged for main.py.
+#
+# 🚫 Lagrange interpolation is NOT supported.
+#    Lagrange interpolation is numerically unstable for dense and noisy
+#    signals such as audio.
+# ═══════════════════════════════════════════════════════════════════
 
 def reconstruct_signal(
     time_axis: np.ndarray,
@@ -185,71 +173,8 @@ def reconstruct_signal(
     mask: np.ndarray,
     method: str = "spline",
 ) -> np.ndarray:
-    """
-    Reconstruct missing samples using numerical interpolation.
-
-    Args:
-        time_axis: full time array
-        spoiled:   degraded signal (dropped samples = 0)
-        mask:      boolean mask; True = valid sample
-        method:    'linear', 'spline', 'pchip', or 'moving_average'
-
-    Returns:
-        Fully reconstructed signal array (clamped to [-1, 1])
-    """
-    valid_t = time_axis[mask]
-    valid_y = spoiled[mask]
-
-    if len(valid_t) < 2:
-        return spoiled.copy()
-
-    missing_t = time_axis[~mask]
-
-    # ── Moving average: linear fill then smooth ──────────────────────
-    if method == "moving_average":
-        # Step 1: linear interpolation to fill every gap
-        lin_fn = interpolate.interp1d(
-            valid_t, valid_y, kind="linear",
-            bounds_error=False, fill_value="extrapolate",
-        )
-        reconstructed = spoiled.copy()
-        if len(missing_t) > 0:
-            filled = lin_fn(missing_t)
-            filled = np.where(np.isfinite(filled), filled, 0.0)
-            reconstructed[~mask] = filled
-        # Step 2: sliding window smooth (≈0.5 % of signal, at least 3)
-        win = max(3, int(len(time_axis) * 0.005))
-        if win % 2 == 0:
-            win += 1
-        reconstructed = uniform_filter1d(reconstructed, size=win)
-        return np.clip(reconstructed, -1.0, 1.0)
-
-    # ── Pick interpolation function ──────────────────────────────────
-    if method == "linear":
-        interp_fn = interpolate.interp1d(
-            valid_t, valid_y, kind="linear",
-            bounds_error=False, fill_value="extrapolate",
-        )
-    elif method == "pchip":
-        interp_fn = interpolate.PchipInterpolator(valid_t, valid_y, extrapolate=True)
-    else:  # spline (default and recommended)
-        interp_fn = interpolate.CubicSpline(valid_t, valid_y, extrapolate=True)
-
-    # Build output: keep valid samples, interpolate missing ones
-    reconstructed = spoiled.copy()
-    if len(missing_t) > 0:
-        interpolated_values = interp_fn(missing_t)
-        # Sanitize: replace NaN/Inf with 0
-        interpolated_values = np.where(
-            np.isfinite(interpolated_values), interpolated_values, 0.0
-        )
-        # Clamp to [-1, 1] to prevent extreme oscillations
-        interpolated_values = np.clip(interpolated_values, -1.0, 1.0)
-        reconstructed[~mask] = interpolated_values
-
-    # Final clip
-    reconstructed = np.clip(reconstructed, -1.0, 1.0)
-    return reconstructed
+    """Delegate to ``backend.interpolation.reconstruct``."""
+    return _interpolation_reconstruct(time_axis, spoiled, mask, method=method)
 
 
 # ═══════════════════════════════════════════════════════════════════
