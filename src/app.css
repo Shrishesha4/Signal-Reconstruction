@@ -1,0 +1,84 @@
+/* Tailwind v4: use @import instead of @tailwind directives */
+@import 'tailwindcss';
+@plugin '@tailwindcss/forms';
+@plugin '@tailwindcss/typography';
+
+:root {
+  --accent: #3b82f6;
+  --accent-dark: #2563eb;
+}
+
+body {
+  @apply bg-slate-100 text-slate-800 antialiased;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+}
+
+/* layout */
+.container { @apply mx-auto max-w-7xl px-4 sm:px-6 lg:px-8; }
+
+/* card system */
+.card {
+  @apply bg-white rounded-xl border border-slate-200 p-5 shadow-sm;
+  transition: box-shadow 0.15s ease;
+}
+.card:hover { @apply shadow-md; }
+
+/* section headers */
+.section-header {
+  @apply flex items-center gap-3 mb-4;
+}
+.section-number {
+  @apply inline-flex items-center justify-center w-7 h-7 rounded-full
+         bg-blue-600 text-white text-xs font-bold shrink-0;
+}
+.section-title {
+  @apply text-lg font-semibold text-slate-800 tracking-tight;
+}
+.section-subtitle {
+  @apply text-sm text-slate-500 font-normal ml-1;
+}
+
+/* form controls */
+input[type="text"], input[type="number"], select {
+  @apply rounded-lg border-slate-300 text-sm shadow-sm
+         focus:border-blue-500 focus:ring-blue-500/20 focus:ring-2;
+}
+input[type="range"] {
+  @apply appearance-none w-full h-2 rounded-lg bg-slate-200 cursor-pointer accent-blue-600;
+}
+
+/* metric cards */
+.metric-card {
+  @apply bg-slate-50 rounded-lg p-4 border border-slate-200 text-center;
+}
+.metric-value {
+  @apply text-2xl font-bold text-slate-800 tabular-nums;
+}
+.metric-label {
+  @apply text-xs font-medium text-slate-500 uppercase tracking-wider mt-1;
+}
+
+/* badge / pill */
+.badge {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+}
+.badge-blue { @apply bg-blue-100 text-blue-700; }
+.badge-green { @apply bg-emerald-100 text-emerald-700; }
+.badge-orange { @apply bg-orange-100 text-orange-700; }
+
+/* icon button */
+.btn-icon {
+  @apply inline-flex items-center justify-center w-7 h-7 rounded-md
+         text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors;
+}
+
+/* method selector pills */
+.method-pill {
+  @apply px-4 py-2 rounded-lg text-sm font-medium border cursor-pointer transition-all;
+}
+.method-pill-active {
+  @apply bg-blue-600 text-white border-blue-600 shadow-sm;
+}
+.method-pill-inactive {
+  @apply bg-white text-slate-600 border-slate-300 hover:border-blue-400 hover:text-blue-600;
+}
