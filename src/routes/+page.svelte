@@ -1,147 +1,188 @@
 <script lang="ts">
   /**
-   * +page.svelte – root page that wires the four visual sections:
-   *   1. Signal Input
-   *   2. Preprocessing
-   *   3. Interpolation Engine
-   *   4. Analysis & Validation
+   * +page.svelte – Audio Signal Reconstruction Pipeline
+   *
+   * Flow: Audio Input → Degradation → Reconstruction → Analysis + Playback
+   *
+   * All heavy processing runs on the Python backend (FastAPI).
+   * The frontend handles UI, visualization, and audio playback.
    */
-  import SignalInput          from '$lib/components/SignalInput.svelte';
-  import Preprocessing        from '$lib/components/Preprocessing.svelte';
-  import InterpolationEngine  from '$lib/components/InterpolationEngine.svelte';
-  import Analysis             from '$lib/components/Analysis.svelte';
-  import Chart                from '$lib/components/Chart.svelte';
+  import AudioInput           from '$lib/components/AudioInput.svelte';
+  import DegradationControls  from '$lib/components/DegradationControls.svelte';
+  import WaveformChart        from '$lib/components/WaveformChart.svelte';
+  import AudioPlayer          from '$lib/components/AudioPlayer.svelte';
+  import MetricsPanel         from '$lib/components/MetricsPanel.svelte';
+  import {
+    processAudio,
+    loadDemo,
+    reconstructOnly,
+    checkHealth,
+    type ProcessingResult,
+    type ProcessingMetrics,
+  } from '$lib/api';
+  import { onMount } from 'svelte';
 
-  // ── Demo signal: a sampled damped sine that clearly benefits from interpolation ──
-  function generateDemoData(): Array<{ x: number; y: number }> {
-    return [
-      { x: 0.0, y:  0.00 },
-      { x: 0.6, y:  0.82 },
-      { x: 1.3, y:  0.96 },
-      { x: 2.0, y:  0.35 },
-      { x: 2.7, y: -0.52 },
-      { x: 3.4, y: -0.90 },
-      { x: 4.1, y: -0.38 },
-      { x: 5.0, y:  0.48 }
-    ];
-  }
+  // ── State ────────────────────────────────────────────────────────
+  let backendOnline = $state(false);
+  let processing = $state(false);
+  let error = $state('');
 
-  // ── reactive state ────────────────────────────────────────────────
-  let rawPoints: Array<{ x: number; y: number }> = $state(generateDemoData());
-  let processedPoints: Array<{ x: number; y: number }> = $state(generateDemoData());
-  let reconstructedPoints: Array<{ x: number; y: number }> = $state([]);
+  // Degradation / method parameters
+  let dropoutPct = $state(20);
+  let noiseLevel = $state(0.02);
+  let method = $state('spline');
 
-  let resetKey = $state(0);
+  // Current audio file (null = use demo)
+  let audioFile: File | null = $state(null);
 
-  // ── callbacks from child components ───────────────────────────────
-  function onRawChange(pts: Array<{ x: number; y: number }>) {
-    rawPoints = pts;
-  }
-  function onProcessed(pts: Array<{ x: number; y: number }>) {
-    processedPoints = pts;
-  }
-  function onReconstructed(pts: Array<{ x: number; y: number }>) {
-    reconstructedPoints = pts;
-  }
-  function resetToDemo() {
-    const demo = generateDemoData();
-    rawPoints = demo;
-    processedPoints = demo;
-    reconstructedPoints = [];
-    resetKey++;
-  }
+  // Processing results
+  let result = $state<ProcessingResult | null>(null);
 
-  // ── chart data for the overview panel ─────────────────────────────
-  let comparisonChart = $derived({
-    datasets: [
-      {
-        label: 'Raw Samples',
-        data: rawPoints.map(p => ({ x: p.x, y: p.y })),
-        showLine: false,
-        pointRadius: 6,
-        pointHoverRadius: 8,
-        borderColor: '#3b82f6',
-        backgroundColor: '#3b82f6',
-        pointStyle: 'circle',
-        order: 2
-      },
-      {
-        label: 'Preprocessed',
-        data: processedPoints.map(p => ({ x: p.x, y: p.y })),
-        showLine: false,
-        pointRadius: 5,
-        pointHoverRadius: 7,
-        borderColor: '#10b981',
-        backgroundColor: '#10b981',
-        pointStyle: 'triangle',
-        order: 1
-      },
-      {
-        label: 'Reconstructed Signal',
-        data: reconstructedPoints.map(p => ({ x: p.x, y: p.y })),
-        borderColor: '#f97316',
-        backgroundColor: 'rgba(249,115,22,0.08)',
-        pointRadius: 0,
-        showLine: true,
-        borderWidth: 2.5,
-        tension: 0.2,
-        fill: true,
-        order: 0
-      }
-    ]
+  // Derived from result
+  let plotTime         = $derived(result?.plot.time ?? []);
+  let plotOriginal     = $derived(result?.plot.original ?? []);
+  let plotSpoiled      = $derived(result?.plot.spoiled ?? []);
+  let plotReconstructed = $derived(result?.plot.reconstructed ?? []);
+  let metrics          = $derived(result?.metrics ?? null);
+  let totalSamples     = $derived(result?.totalSamples ?? 0);
+  let sampleRate       = $derived(result?.sampleRate ?? 0);
+
+  // Audio playback data
+  let audioOriginal     = $derived(result?.audio.original ?? '');
+  let audioSpoiled      = $derived(result?.audio.spoiled ?? '');
+  let audioReconstructed = $derived(result?.audio.reconstructed ?? '');
+
+  // ── Backend health check ──────────────────────────────────────────
+  onMount(() => {
+    checkHealth().then(ok => backendOnline = ok);
+    const interval = setInterval(async () => {
+      const ok = await checkHealth();
+      backendOnline = ok;
+      if (ok) clearInterval(interval);
+    }, 5000);
+    return () => clearInterval(interval);
   });
+
+  // ── Actions ───────────────────────────────────────────────────────
+  function onFileSelected(file: File) {
+    audioFile = file;
+    error = '';
+  }
+
+  async function onDemoSelected() {
+    audioFile = null;
+    error = '';
+    await runProcessing();
+  }
+
+  async function runProcessing() {
+    if (!backendOnline) {
+      error = 'Backend is offline. Start the Python server first.';
+      return;
+    }
+    processing = true;
+    error = '';
+    try {
+      if (audioFile) {
+        result = await processAudio(audioFile, dropoutPct, noiseLevel, method);
+      } else {
+        result = await loadDemo(dropoutPct, noiseLevel, method);
+      }
+    } catch (e: any) {
+      error = e.message || 'Processing failed.';
+      result = null;
+    } finally {
+      processing = false;
+    }
+  }
+
+  // Re-run with different method (without re-uploading)
+  async function switchMethod(newMethod: string) {
+    if (!result || !backendOnline) return;
+    method = newMethod;
+    processing = true;
+    error = '';
+    try {
+      result = await reconstructOnly(
+        result.plot.time,
+        result.plot.original,
+        result.plot.spoiled,
+        result.mask,
+        newMethod,
+        result.sampleRate
+      );
+    } catch (e: any) {
+      error = e.message || 'Reconstruction failed.';
+    } finally {
+      processing = false;
+    }
+  }
 </script>
 
-<!-- Hero overview chart -->
-<section class="mb-6">
-  <div class="card">
-    <div class="flex items-center justify-between mb-3">
-      <div>
-        <h2 class="text-lg font-semibold text-slate-800">Signal Overview</h2>
-        <p class="text-xs text-slate-500 mt-0.5">
-          Comparison of raw samples, preprocessed points, and reconstructed curve
-        </p>
-      </div>
-      <button onclick={resetToDemo}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
-               text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-colors">
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        Reset Demo
-      </button>
-    </div>
-    <div class="w-full h-72 sm:h-80">
-      <Chart data={comparisonChart} height={320} />
-    </div>
-    <div class="flex gap-4 mt-3 justify-center flex-wrap">
-      <span class="flex items-center gap-1.5 text-xs text-slate-600">
-        <span class="w-3 h-3 rounded-full bg-blue-500"></span> Raw Samples
-      </span>
-      <span class="flex items-center gap-1.5 text-xs text-slate-600">
-        <span class="w-3 h-3 rounded-full bg-emerald-500"></span> Preprocessed
-      </span>
-      <span class="flex items-center gap-1.5 text-xs text-slate-600">
-        <span class="w-3 h-3 rounded-full bg-orange-500"></span> Reconstructed
-      </span>
+<!-- Backend status banner -->
+{#if !backendOnline}
+  <div class="mb-5 px-4 py-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-800 text-sm flex items-start gap-3">
+    <svg class="w-5 h-5 shrink-0 mt-0.5 text-amber-500" fill="currentColor" viewBox="0 0 20 20">
+      <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+    </svg>
+    <div>
+      <strong>Backend Offline</strong>
+      <p class="mt-0.5 text-xs">
+        Start the Python server: <code class="px-1.5 py-0.5 rounded bg-amber-100 font-mono text-xs">cd backend && pip install -r requirements.txt && uvicorn backend.main:app --reload</code>
+      </p>
     </div>
   </div>
-</section>
+{/if}
 
-<!-- Sections 1 & 2: Signal Input + Preprocessing side by side -->
+<!-- Error banner -->
+{#if error}
+  <div class="mb-5 px-4 py-3 rounded-xl bg-red-50 border border-red-300 text-red-700 text-sm flex items-center gap-2">
+    <svg class="w-4 h-4 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+      <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+    </svg>
+    {error}
+  </div>
+{/if}
+
+<!-- Sections 1 & 2: Audio Input + Degradation Controls side by side -->
 <section class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
-  {#key resetKey}
-    <SignalInput initial={rawPoints} onchange={onRawChange} />
-    <Preprocessing points={rawPoints} onprocessed={onProcessed} />
-  {/key}
+  <AudioInput onfileselected={onFileSelected} ondemo={onDemoSelected} {processing} />
+  <DegradationControls
+    bind:dropoutPct
+    bind:noiseLevel
+    bind:method
+    {processing}
+    onprocess={runProcessing}
+  />
 </section>
 
-<!-- Section 3: Interpolation Engine -->
+<!-- Section 3: Waveform Visualization -->
 <section class="mb-5">
-  <InterpolationEngine points={processedPoints} onreconstructed={onReconstructed} />
+  <WaveformChart
+    time={plotTime}
+    original={plotOriginal}
+    spoiled={plotSpoiled}
+    reconstructed={plotReconstructed}
+    title="Signal Waveform Comparison"
+    height={360}
+  />
 </section>
 
-<!-- Section 4: Analysis -->
+<!-- Section: Audio Playback -->
 <section class="mb-5">
-  <Analysis original={processedPoints} reconstructed={reconstructedPoints} />
+  <AudioPlayer
+    originalB64={audioOriginal}
+    spoiledB64={audioSpoiled}
+    reconstructedB64={audioReconstructed}
+  />
+</section>
+
+<!-- Section 4: Metrics & Analysis -->
+<section class="mb-5">
+  <MetricsPanel
+    {metrics}
+    {totalSamples}
+    {sampleRate}
+    {method}
+  />
 </section>

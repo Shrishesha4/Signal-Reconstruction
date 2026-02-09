@@ -6,8 +6,9 @@ export type Point = { x: number; y: number };
 /**
  * Maximum safe polynomial degree for Lagrange interpolation.
  * Beyond this, Runge phenomenon causes extreme oscillation.
+ * Set conservatively to prevent visualization issues.
  */
-export const LAGRANGE_MAX_SAFE_DEGREE = 15;
+export const LAGRANGE_MAX_SAFE_DEGREE = 12;
 
 /**
  * Absolute value clamp — any interpolated y beyond this is treated
@@ -18,6 +19,21 @@ const VALUE_CLAMP = 1e12;
 function clamp(v: number): number {
   if (!Number.isFinite(v)) return 0;
   return Math.max(-VALUE_CLAMP, Math.min(VALUE_CLAMP, v));
+}
+
+/**
+ * Range-aware clamp for Lagrange interpolation.
+ * Prevents extreme oscillations from breaking visualization.
+ */
+function clampToRange(v: number, ys: number[]): number {
+  if (!Number.isFinite(v)) return 0;
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const range = maxY - minY;
+  const margin = Math.max(range * 3, 0.1); // Allow 3x range, minimum 0.1
+  const lowerBound = minY - margin;
+  const upperBound = maxY + margin;
+  return Math.max(lowerBound, Math.min(upperBound, v));
 }
 
 // ── Linear Interpolation (piecewise) ────────────────────────────────
@@ -45,6 +61,7 @@ export function linearInterpolation(xs: number[], ys: number[]) {
 // ── Barycentric Lagrange Interpolation (numerically stable) ─────────
 // O(n) evaluation after O(n²) precomputation of weights.
 // Avoids the catastrophic cancellation of the classic formulation.
+// Uses range-aware clamping to prevent Runge oscillations from breaking charts.
 
 export function lagrangeInterpolation(xs: number[], ys: number[]) {
   const n = xs.length;
@@ -79,21 +96,25 @@ export function lagrangeInterpolation(xs: number[], ys: number[]) {
     }
 
     if (denominator === 0) return 0;
-    return clamp(numerator / denominator);
+    const result = numerator / denominator;
+    // Use range-aware clamping to prevent extreme Runge oscillations
+    return clampToRange(result, ys);
   };
 }
 
 /**
  * Check whether Lagrange interpolation is safe for the given dataset.
  * Returns { safe, reason } indicating whether it should be used.
+ * Compares the polynomial degree (n-1) against the safe limit.
  */
 export function isLagrangeSafe(n: number): { safe: boolean; reason: string } {
-  if (n <= LAGRANGE_MAX_SAFE_DEGREE) {
+  const degree = n - 1;
+  if (degree <= LAGRANGE_MAX_SAFE_DEGREE) {
     return { safe: true, reason: '' };
   }
   return {
     safe: false,
-    reason: `Polynomial degree ${n - 1} exceeds safe limit (${LAGRANGE_MAX_SAFE_DEGREE}). Runge phenomenon may cause extreme oscillation.`
+    reason: `Polynomial degree ${degree} exceeds safe limit (${LAGRANGE_MAX_SAFE_DEGREE}). Runge phenomenon may cause extreme oscillation.`
   };
 }
 

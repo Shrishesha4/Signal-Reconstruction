@@ -1,2 +1,6 @@
 numpy
 pandas
+fastapi
+uvicorn[standard]
+scipy
+python-multipart

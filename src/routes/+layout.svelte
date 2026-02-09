@@ -19,8 +19,8 @@
         </svg>
       </div>
       <div>
-        <h1 class="text-lg font-bold text-slate-800 tracking-tight">Signal Reconstruction</h1>
-        <p class="text-xs text-slate-500">Numerical Interpolation &middot; Analysis &middot; Visualization</p>
+        <h1 class="text-lg font-bold text-slate-800 tracking-tight">Audio Signal Reconstruction</h1>
+        <p class="text-xs text-slate-500">Numerical Interpolation &middot; Audio Processing &middot; Analysis</p>
       </div>
     </div>
     <span class="badge badge-blue">Final Year Project</span>
@@ -31,6 +31,6 @@
 
 <footer class="border-t border-slate-200 bg-white mt-8">
   <div class="container py-4 text-center text-xs text-slate-400">
-    Numerical Interpolation for Signal Reconstruction &amp; Analysis &middot; SvelteKit + Chart.js
+    Numerical Interpolation for Audio Signal Reconstruction &amp; Analysis &middot; SvelteKit + FastAPI
   </div>
 </footer>
