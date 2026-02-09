@@ -13,14 +13,10 @@
 <header class="bg-white border-b border-slate-200">
   <div class="container py-4 flex items-center justify-between">
     <div class="flex items-center gap-3">
-      <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center">
-        <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path d="M3 17l4-8 4 6 4-10 4 12" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </div>
+      <img src="/logo.png" alt="Signal Reconstruction Logo" class="h-16 w-auto" />
       <div>
-        <h1 class="text-lg font-bold text-slate-800 tracking-tight">Audio Signal Reconstruction</h1>
-        <p class="text-xs text-slate-500">Numerical Interpolation &middot; Audio Processing &middot; Analysis</p>
+        <h1 class="text-lg font-bold text-slate-800 tracking-tight">Signal Reconstruction</h1>
+        <p class="text-xs text-slate-500">Advanced Audio Signal Processing &middot; Numerical Interpolation</p>
       </div>
     </div>
   </div>

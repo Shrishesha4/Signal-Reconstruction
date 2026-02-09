@@ -21,10 +21,6 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import numpy as np
-import io
-import base64
-import struct
-import wave
 
 from .processing import (
     load_wav_bytes,
