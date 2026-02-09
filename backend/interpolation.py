@@ -346,35 +346,43 @@ def _pchip_reconstruct(
     n = len(t)
     
     # ═══════════════════════════════════════════════════════════════
-    # INTERPOLATION: Use original anchors (like Linear does!)
+    # INTERPOLATION: AR for short gaps (glitches), PCHIP for larger
     # ═══════════════════════════════════════════════════════════════
     
     pchip_fn = sp_interp.PchipInterpolator(vt, vy, extrapolate=True)
     linear_fn = sp_interp.interp1d(vt, vy, kind="linear", 
                                     bounds_error=False, fill_value="extrapolate")
     
-    # Fill gaps
+    # Fill gaps - use AR for short gaps (better for glitches)
     for start, length in zip(starts, lengths):
         end = start + length
         gap_t = t[start:end]
         
-        if length <= _GAP_SMALL_THRESH:
-            filled = linear_fn(gap_t)
+        if length <= _AR_GAP_THRESH:
+            # Short gap: Use AR-based prediction (best for glitches)
+            try:
+                filled = _ar_interpolate_gap(spoiled, mask, start, length, 
+                                             order=min(16, max(4, length // 2)),
+                                             context=max(64, length * 4))
+            except Exception:
+                # Fallback to linear
+                filled = linear_fn(gap_t)
         else:
+            # Large gap: PCHIP interpolation
             filled = pchip_fn(gap_t)
         
         reconstructed[start:end] = _scrub(filled)
     
     # ═══════════════════════════════════════════════════════════════
-    # MA BLEND: Same as Linear - smooth filled samples
+    # MA BLEND: Light smoothing for transition zones
     # ═══════════════════════════════════════════════════════════════
     
     win = max(5, min(15, n // 500))
     win = win if win % 2 == 1 else win + 1
     ma_smoothed = uniform_filter1d(reconstructed, size=win)
     
-    # Blend only on filled samples (same alpha as Linear: 0.35)
-    blend_alpha = _LINEAR_BLEND_ALPHA
+    # Blend only on filled samples - lighter blend for AR regions
+    blend_alpha = _LINEAR_BLEND_ALPHA * 0.5  # Reduced blend for AR
     reconstructed[missing] = (1 - blend_alpha) * reconstructed[missing] + blend_alpha * ma_smoothed[missing]
     
     # Edge blending (same as Linear)
@@ -430,14 +438,20 @@ def _spline_reconstruct(
                                     bounds_error=False, fill_value="extrapolate")
     pchip_fn = sp_interp.PchipInterpolator(vt, vy, extrapolate=True)
     
-    # Process each gap based on size (spline favors large gaps)
+    # Process each gap - use AR for short gaps (glitches), spline for large
     for start, length in zip(starts, lengths):
         end = start + length
         gap_t = t[start:end]
         
-        if length <= _GAP_SMALL_THRESH:
-            # Small gap: linear
-            filled = linear_fn(gap_t)
+        if length <= _AR_GAP_THRESH:
+            # Short gap: Use AR-based prediction (best for glitches)
+            try:
+                filled = _ar_interpolate_gap(spoiled, mask, start, length,
+                                             order=min(16, max(4, length // 2)),
+                                             context=max(64, length * 4))
+            except Exception:
+                # Fallback to linear
+                filled = linear_fn(gap_t)
         elif length <= _GAP_MEDIUM_THRESH:
             # Medium gap: PCHIP (safer than spline for medium)
             filled = pchip_fn(gap_t)
@@ -451,15 +465,15 @@ def _spline_reconstruct(
         reconstructed[start:end] = _scrub(filled)
 
     # ═══════════════════════════════════════════════════════════════
-    # MA BLEND: Same as PCHIP/Linear - smooth filled samples
+    # MA BLEND: Light smoothing - reduced for AR regions
     # ═══════════════════════════════════════════════════════════════
     n = len(t)
     win = max(5, min(15, n // 500))
     win = win if win % 2 == 1 else win + 1
     ma_smoothed = uniform_filter1d(reconstructed, size=win)
     
-    # Blend only on filled samples (same alpha as PCHIP/Linear)
-    blend_alpha = _LINEAR_BLEND_ALPHA
+    # Blend only on filled samples - lighter blend for AR
+    blend_alpha = _LINEAR_BLEND_ALPHA * 0.5
     reconstructed[missing] = (1 - blend_alpha) * reconstructed[missing] + blend_alpha * ma_smoothed[missing]
     
     # Edge blending
@@ -510,19 +524,24 @@ def _linear_reconstruct(
                                     assume_sorted=True)
     pchip_fn = sp_interp.PchipInterpolator(vt, vy, extrapolate=True)
     
-    # Process each gap: linear for small, PCHIP for larger
+    # Process each gap: AR for short (glitches), linear/PCHIP for larger
     for start, length in zip(starts, lengths):
         end = start + length
         gap_t = t[start:end]
         
-        if length <= _GAP_SMALL_THRESH:
-            # This is linear's sweet spot
-            filled = linear_fn(gap_t)
+        if length <= _AR_GAP_THRESH:
+            # Short gap: Use AR-based prediction (best for glitches)
+            try:
+                filled = _ar_interpolate_gap(spoiled, mask, start, length,
+                                             order=min(16, max(4, length // 2)),
+                                             context=max(64, length * 4))
+            except Exception:
+                # Fallback to linear
+                filled = linear_fn(gap_t)
         elif length <= _GAP_MEDIUM_THRESH:
             # Medium gaps: blend linear and PCHIP
             lin_fill = linear_fn(gap_t)
             pchip_fill = pchip_fn(gap_t)
-            # Weighted blend: more PCHIP as gap gets larger
             w = min(0.7, length / _GAP_MEDIUM_THRESH)
             filled = (1 - w) * lin_fill + w * pchip_fill
         else:
@@ -537,8 +556,8 @@ def _linear_reconstruct(
     win = win if win % 2 == 1 else win + 1
     ma = uniform_filter1d(reconstructed, size=win)
 
-    # Blend only on missing samples — original anchors stay untouched.
-    alpha = _LINEAR_BLEND_ALPHA
+    # Blend only on missing samples — lighter for AR regions
+    alpha = _LINEAR_BLEND_ALPHA * 0.5  # Reduced blend for AR
     reconstructed[missing] = (
         (1.0 - alpha) * reconstructed[missing]
         + alpha * ma[missing]
@@ -1130,3 +1149,186 @@ def _scrub(values: NDArray[np.float64]) -> NDArray[np.float64]:
         np.where(np.isfinite(values), values, 0.0),
         -1.0, 1.0,
     )
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  AR-Based (Linear Prediction) Interpolation for Short Gaps
+# ═══════════════════════════════════════════════════════════════════
+
+def _ar_interpolate_gap(
+    signal: NDArray[np.float64],
+    mask: NDArray[np.bool_],
+    start: int,
+    length: int,
+    order: int = 12,
+    context: int = 64,
+) -> NDArray[np.float64]:
+    """
+    Fill a short gap using bidirectional Autoregressive (AR) linear prediction.
+    
+    This is the classic Janssen/Etter method for audio inpainting of short gaps
+    (< 10ms). It predicts samples using weighted sum of neighboring samples.
+    
+    Parameters
+    ----------
+    signal : array
+        The signal with corrupted samples
+    mask : array
+        True = valid sample, False = missing
+    start : int
+        Start index of the gap
+    length : int
+        Number of samples to fill
+    order : int
+        AR model order (number of coefficients). Higher = better for complex signals.
+        Typical: 8-16 for speech, 12-24 for music
+    context : int
+        Number of valid samples to use before/after gap for coefficient estimation
+        
+    Returns
+    -------
+    Filled samples for the gap region
+    """
+    n = len(signal)
+    end = start + length
+    
+    # Get context windows before and after gap
+    ctx_before_start = max(0, start - context)
+    ctx_after_end = min(n, end + context)
+    
+    # Extract valid context samples BEFORE the gap
+    before_region = signal[ctx_before_start:start]
+    before_mask = mask[ctx_before_start:start]
+    before_valid = before_region[before_mask]
+    
+    # Extract valid context samples AFTER the gap
+    after_region = signal[end:ctx_after_end]
+    after_mask = mask[end:ctx_after_end]
+    after_valid = after_region[after_mask]
+    
+    # Need enough context for AR estimation
+    min_ctx = order + 2
+    has_before = len(before_valid) >= min_ctx
+    has_after = len(after_valid) >= min_ctx
+    
+    if not has_before and not has_after:
+        # Fall back to linear interpolation
+        if start > 0 and end < n:
+            return np.linspace(signal[start-1], signal[end], length + 2)[1:-1]
+        return np.zeros(length)
+    
+    filled = np.zeros(length)
+    weights = np.zeros(length)  # For blending forward/backward
+    
+    # ─── Forward prediction (left → right) ───────────────
+    if has_before:
+        # Estimate AR coefficients from before-context using Burg's method
+        ar_coeffs = _estimate_ar_coefficients(before_valid, order)
+        
+        # Build forward prediction
+        # We need the last 'order' valid samples before the gap
+        pred_buffer = before_valid[-order:].copy() if len(before_valid) >= order else np.pad(before_valid, (order - len(before_valid), 0), mode='edge')
+        
+        for i in range(length):
+            # Predict next sample: y[n] = sum(a[k] * y[n-k]) for k=1..order
+            pred = -np.dot(ar_coeffs[1:], pred_buffer[::-1][:order])
+            filled[i] += pred
+            
+            # Confidence weight: decreases as we predict further into gap
+            weights[i] += np.exp(-0.1 * i)
+            
+            # Shift buffer and add prediction
+            pred_buffer = np.roll(pred_buffer, -1)
+            pred_buffer[-1] = pred
+    
+    # ─── Backward prediction (right → left) ──────────────
+    if has_after:
+        # Estimate AR coefficients from after-context
+        ar_coeffs = _estimate_ar_coefficients(after_valid[::-1], order)  # Reverse for backward
+        
+        # Build backward prediction
+        pred_buffer = after_valid[:order].copy() if len(after_valid) >= order else np.pad(after_valid, (0, order - len(after_valid)), mode='edge')
+        
+        back_filled = np.zeros(length)
+        back_weights = np.zeros(length)
+        
+        for i in range(length):
+            # Predict previous sample (backward)
+            pred = -np.dot(ar_coeffs[1:], pred_buffer[:order])
+            back_filled[length - 1 - i] = pred
+            
+            # Confidence weight: decreases as we predict further
+            back_weights[length - 1 - i] = np.exp(-0.1 * i)
+            
+            # Shift buffer for backward prediction
+            pred_buffer = np.roll(pred_buffer, 1)
+            pred_buffer[0] = pred
+        
+        filled += back_filled * back_weights
+        weights += back_weights
+    
+    # Normalize by weights (weighted average of forward/backward)
+    weights = np.maximum(weights, 1e-10)
+    filled = filled / weights
+    
+    return _scrub(filled)
+
+
+def _estimate_ar_coefficients(
+    signal: NDArray[np.float64], 
+    order: int
+) -> NDArray[np.float64]:
+    """
+    Estimate AR coefficients using Burg's method.
+    
+    Burg's method is preferred over autocorrelation/Yule-Walker because:
+    1. Better for short data segments
+    2. Guaranteed stable (all poles inside unit circle)
+    3. Minimizes both forward and backward prediction error
+    
+    Returns coefficients [1, a1, a2, ..., a_order] where:
+    y[n] + a1*y[n-1] + a2*y[n-2] + ... = 0
+    """
+    n = len(signal)
+    if n <= order:
+        order = max(1, n - 1)
+    
+    # Initialize
+    ef = signal.copy()  # Forward prediction error
+    eb = signal.copy()  # Backward prediction error
+    coeffs = np.zeros(order + 1)
+    coeffs[0] = 1.0
+    
+    # Burg recursion
+    a = np.zeros(order + 1)
+    a[0] = 1.0
+    
+    for m in range(order):
+        # Compute reflection coefficient
+        num = -2.0 * np.dot(ef[m+1:], eb[m:-1])
+        den = np.dot(ef[m+1:], ef[m+1:]) + np.dot(eb[m:-1], eb[m:-1])
+        
+        if abs(den) < 1e-10:
+            break
+            
+        k = num / den
+        k = np.clip(k, -0.99, 0.99)  # Ensure stability
+        
+        # Update coefficients using Levinson-Durbin recursion
+        a_new = np.zeros(order + 1)
+        a_new[0] = 1.0
+        for j in range(1, m + 2):
+            a_new[j] = a[j] + k * a[m + 1 - j]
+        a = a_new
+        
+        # Update prediction errors
+        ef_new = ef[m+1:] + k * eb[m:-1]
+        eb_new = eb[m:-1] + k * ef[m+1:]
+        ef = np.concatenate([ef[:m+1], ef_new])
+        eb = np.concatenate([eb_new, eb[-1:]])
+    
+    return a
+
+
+# Threshold for AR vs interpolation
+_AR_GAP_THRESH = 80  # Use AR for gaps <= this (samples); ~10ms at 8kHz

@@ -141,17 +141,3 @@
     </div>
   </div>
 </div>
-
-<!-- Expected Data Format Info -->
-<details class="mt-4 text-xs text-slate-500">
-  <summary class="cursor-pointer hover:text-slate-700">Expected data format</summary>
-  <div class="mt-2 p-3 bg-slate-50 rounded-lg font-mono text-xs">
-    <p class="mb-2"><strong>CSV:</strong></p>
-    <pre class="bg-slate-100 p-2 rounded mb-3">time,value
-0.0,1.23
-0.1,1.45
-...</pre>
-    <p class="mb-2"><strong>JSON:</strong></p>
-    <pre class="bg-slate-100 p-2 rounded">{"{"}"time": [0, 0.1, ...], "values": [1.23, 1.45, ...]{"}"}</pre>
-  </div>
-</details>
