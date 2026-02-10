@@ -61,11 +61,6 @@
           <path stroke-linecap="round" stroke-linejoin="round" d={tab.icon} />
         </svg>
         {tab.label}
-        
-        <!-- Active indicator dot -->
-        {#if activeTab === tab.id}
-          <span class="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-blue-600"></span>
-        {/if}
       </button>
     {/each}
   </div>
