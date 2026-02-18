@@ -15,7 +15,7 @@
  *     POST /api/scidata/process   – Upload CSV/JSON + process
  */
 
-const API_BASE = '';
+const API_BASE = 'http://127.0.0.1:8000'; // Adjust if backend is hosted elsewhere
 
 // ═══════════════════════════════════════════════════════════════════
 // Types – Audio
